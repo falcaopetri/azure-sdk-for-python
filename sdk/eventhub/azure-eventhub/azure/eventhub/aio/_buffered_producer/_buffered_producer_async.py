@@ -184,7 +184,7 @@ class BufferedProducer:
                         await self._on_error(batch, self.partition_id, exc)
                 finally:
                     self._cur_buffered_len -= len(batch)
-            # If flush could not get the semaphore, we log and raise error if wanted
+            # If flush could not send all buffered batches, we log and raise error if wanted
             else:
                 _LOGGER.info(
                     "Partition %r fails to flush due to timeout.", self.partition_id
@@ -207,7 +207,8 @@ class BufferedProducer:
                 _LOGGER.info(
                     "Partition %r worker is checking max_wait_time.", self.partition_id
                 )
-                # flush the partition if its beyond the waiting time or the buffer is at max capacity
+                # flush the partition if the producer is running beyond the waiting time
+                # or the buffer is at max capacity
                 if (now_time - self._last_send_time > self._max_wait_time) or (
                     self._cur_buffered_len >= self._max_buffer_len
                 ):

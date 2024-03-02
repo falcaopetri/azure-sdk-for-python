@@ -71,7 +71,8 @@ class BufferedProducer:
         else:
             if self._cur_buffered_len:
                 _LOGGER.warning(
-                    "Shutting down Partition %r. There are still %r events in the buffer which will be lost",
+                    "Shutting down Partition %r."
+                    " There are still %r events in the buffer which will be lost",
                     self.partition_id,
                     self._cur_buffered_len,
                 )
@@ -138,65 +139,67 @@ class BufferedProducer:
         return wrapper_callback
 
     def flush(self, timeout_time=None, raise_error=True):
+        with self._lock:
+            self._flush(timeout_time, raise_error)
+
+    def _flush(self, timeout_time=None, raise_error=True):
         # pylint: disable=protected-access
         # try flushing all the buffered batch within given time
-        with self._lock:
-            _LOGGER.info("Partition: %r started flushing.", self.partition_id)
-            if self._cur_batch:  # if there is batch, enqueue it to the buffer first
-                self._buffered_queue.put(self._cur_batch)
-                self._cur_batch = EventDataBatch(self._max_message_size_on_link, amqp_transport=self._amqp_transport)
-            while self._buffered_queue.qsize() > 0:
-                remaining_time = timeout_time - time.time() if timeout_time else None
-                if (remaining_time and remaining_time > 0) or remaining_time is None:
-                    try:
-                        batch = self._buffered_queue.get(block=False)
-                    except queue.Empty:
-                        break
-                    self._buffered_queue.task_done()
-                    try:
-                        _LOGGER.info("Partition %r is sending.", self.partition_id)
-                        self._producer.send(
-                            batch,
-                            timeout=timeout_time - time.time()
-                            if timeout_time
-                            else None,
-                        )
-                        _LOGGER.info(
-                            "Partition %r sending %r events succeeded.",
-                            self.partition_id,
-                            len(batch),
-                        )
-                        try:
-                            self._on_success(batch._internal_events, self.partition_id)
-                        except AttributeError:
-                            self._on_success(batch, self.partition_id)
-                    except Exception as exc:  # pylint: disable=broad-except
-                        _LOGGER.info(
-                            "Partition %r sending %r events failed due to exception: %r ",
-                            self.partition_id,
-                            len(batch),
-                            exc,
-                        )
-                        try:
-                            self._on_error(batch._internal_events, self.partition_id, exc)
-                        except AttributeError:
-                            self._on_error(batch, self.partition_id, exc)
-                    finally:
-                        self._cur_buffered_len -= len(batch)
-                else:
-                    _LOGGER.info(
-                        "Partition %r fails to flush due to timeout.", self.partition_id
-                    )
-                    if raise_error:
-                        raise OperationTimeoutError(
-                            "Failed to flush {!r} within {}".format(
-                                self.partition_id, timeout_time
-                            )
-                        )
+        _LOGGER.info("Partition: %r started flushing.", self.partition_id)
+        if self._cur_batch:  # if there is batch, enqueue it to the buffer first
+            self._buffered_queue.put(self._cur_batch)
+            self._cur_batch = EventDataBatch(self._max_message_size_on_link, amqp_transport=self._amqp_transport)
+        while self._buffered_queue.qsize() > 0:
+            remaining_time = timeout_time - time.time() if timeout_time else None
+            if (remaining_time and remaining_time > 0) or remaining_time is None:
+                try:
+                    batch = self._buffered_queue.get(block=False)
+                except queue.Empty:
                     break
-            # after finishing flushing, reset cur batch and put it into the buffer
-            self._last_send_time = time.time()
-            _LOGGER.info("Partition %r finished flushing.", self.partition_id)
+                self._buffered_queue.task_done()
+                try:
+                    _LOGGER.info("Partition %r is sending.", self.partition_id)
+                    self._producer.send(
+                        batch,
+                        timeout=timeout_time - time.time() if timeout_time else None,
+                    )
+                    _LOGGER.info(
+                        "Partition %r sending %r events succeeded.",
+                        self.partition_id,
+                        len(batch),
+                    )
+                    try:
+                        self._on_success(batch._internal_events, self.partition_id)
+                    except AttributeError:
+                        self._on_success(batch, self.partition_id)
+                except Exception as exc:  # pylint: disable=broad-except
+                    _LOGGER.info(
+                        "Partition %r sending %r events failed due to exception: %r",
+                        self.partition_id,
+                        len(batch),
+                        exc,
+                    )
+                    try:
+                        self._on_error(batch._internal_events, self.partition_id, exc)
+                    except AttributeError:
+                        self._on_error(batch, self.partition_id, exc)
+                finally:
+                    self._cur_buffered_len -= len(batch)
+            # If flush could not send all buffered batches, we log and raise error if wanted
+            else:
+                _LOGGER.info(
+                    "Partition %r fails to flush due to timeout.", self.partition_id
+                )
+                if raise_error:
+                    raise OperationTimeoutError(
+                        "Failed to flush {!r} within {}".format(
+                            self.partition_id, timeout_time
+                        )
+                    )
+                break
+        # after finishing flushing, reset cur batch and put it into the buffer
+        self._last_send_time = time.time()
+        _LOGGER.info("Partition %r finished flushing.", self.partition_id)
 
     def check_max_wait_time_worker(self):
         while self._running:
