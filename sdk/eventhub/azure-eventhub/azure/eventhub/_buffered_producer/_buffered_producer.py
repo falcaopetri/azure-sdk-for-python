@@ -66,8 +66,7 @@ class BufferedProducer:
     def stop(self, flush=True, timeout_time=None, raise_error=False):
         self._running = False
         if flush:
-            with self._lock:
-                self.flush(timeout_time=timeout_time, raise_error=raise_error)
+            self.flush(timeout_time=timeout_time, raise_error=raise_error)
         else:
             if self._cur_buffered_len:
                 _LOGGER.warning(
@@ -214,8 +213,7 @@ class BufferedProducer:
                     self._cur_buffered_len >= self._max_buffer_len
                 ):
                     # in the worker, not raising error for flush, users can not handle this
-                    with self._lock:
-                        self.flush(raise_error=False)
+                    self.flush(raise_error=False)
             time.sleep(min(self._max_wait_time, 5))
 
     @property
